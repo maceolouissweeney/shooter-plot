@@ -7,7 +7,7 @@ from scipy.interpolate import interp1d
 st.set_page_config(layout="wide")
 
 # -------------------------
-# Raw calibration data
+# Raw Tuning data
 # -------------------------
 
 distance_pts = np.array([
@@ -63,15 +63,6 @@ tunnel_rpm_pts = np.array([
 ])
 
 
-# -------------------------
-# Regression Controls
-# -------------------------
-
-use_regression = st.checkbox(
-    "Enable Regression Fit",
-    value=True
-)
-
 fit_type = st.selectbox(
     "Regression Type",
     [
@@ -108,55 +99,23 @@ def fit_curve(x, y, fit_type):
 
     return lambda xx: poly(xx)
 
-# -------------------------
-# Interpolators
-# -------------------------
+shooter_model = fit_curve(
+    distance_pts,
+    shooter_rpm_pts,
+    fit_type
+)
 
-if use_regression:
+hood_model = fit_curve(
+    distance_pts,
+    hood_angle_pts,
+    fit_type
+)
 
-    shooter_model = fit_curve(
-        distance_pts,
-        shooter_rpm_pts,
-        fit_type
-    )
-
-    hood_model = fit_curve(
-        distance_pts,
-        hood_angle_pts,
-        fit_type
-    )
-
-    tunnel_model = fit_curve(
-        distance_pts,
-        tunnel_rpm_pts,
-        fit_type
-    )
-
-else:
-
-    shooter_model = lambda x: np.interp(
-        x,
-        distance_pts,
-        shooter_rpm_pts
-    )
-
-    hood_model = lambda x: np.interp(
-        x,
-        distance_pts,
-        hood_angle_pts
-    )
-
-    tunnel_model = lambda x: np.interp(
-        x,
-        distance_pts,
-        tunnel_rpm_pts
-    )
-
-# -------------------------
-# Controls
-# -------------------------
-
-st.title("Robot Shooter Calibration Curve")
+tunnel_model = fit_curve(
+    distance_pts,
+    tunnel_rpm_pts,
+    fit_type
+)
 
 d_min = st.slider(
     "Minimum Distance (m)",
@@ -229,18 +188,6 @@ fig.add_trace(
         name="Measured Points"
     )
 )
-
-if show_points:
-    fig.add_trace(
-        go.Scatter3d(
-            x=distance_pts,
-            y=hood_angle_pts,
-            z=shooter_rpm_pts,
-            mode="markers",
-            marker=dict(size=6),
-            name="Calibration Points"
-        )
-    )
 
 fig.update_layout(
     scene=dict(
