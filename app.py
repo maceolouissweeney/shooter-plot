@@ -49,20 +49,6 @@ hood_angle_pts = np.array([
     26.5
 ])
 
-tunnel_rpm_pts = np.array([
-    1425,
-    1450,
-    1500,
-    1550,
-    1650,
-    1750,
-    1800,
-    1950,
-    2150,
-    2150
-])
-
-
 fit_type = st.selectbox(
     "Regression Type",
     [
@@ -99,6 +85,20 @@ def fit_curve(x, y, fit_type):
 
     return lambda xx: poly(xx)
 
+
+def compute_fit_metrics(x, y, model):
+    y_pred = model(x)
+    residuals = y - y_pred
+    ss_res = np.sum(residuals ** 2)
+    ss_tot = np.sum((y - np.mean(y)) ** 2)
+    r2 = 1.0 - ss_res / ss_tot if ss_tot > 0 else 0.0
+    rmse = np.sqrt(np.mean(residuals ** 2))
+    return {
+        "r2": r2,
+        "rmse": rmse,
+        "num_points": len(y)
+    }
+
 shooter_model = fit_curve(
     distance_pts,
     shooter_rpm_pts,
@@ -108,12 +108,6 @@ shooter_model = fit_curve(
 hood_model = fit_curve(
     distance_pts,
     hood_angle_pts,
-    fit_type
-)
-
-tunnel_model = fit_curve(
-    distance_pts,
-    tunnel_rpm_pts,
     fit_type
 )
 
@@ -191,6 +185,21 @@ fig.update_layout(
 )
 
 st.plotly_chart(fig, use_container_width=True)
+
+# -------------------------
+# Fit quality metrics
+# -------------------------
+
+shooter_metrics = compute_fit_metrics(distance_pts, shooter_rpm_pts, shooter_model)
+hood_metrics = compute_fit_metrics(distance_pts, hood_angle_pts, hood_model)
+
+col1, col2 = st.columns(2)
+with col1:
+    st.metric("Shooter fit R²", f"{shooter_metrics['r2']:.4f}")
+    st.metric("Shooter RMSE", f"{shooter_metrics['rmse']:.2f}")
+with col2:
+    st.metric("Hood fit R²", f"{hood_metrics['r2']:.4f}")
+    st.metric("Hood RMSE", f"{hood_metrics['rmse']:.2f}")
 
 # -------------------------
 # Data Table
