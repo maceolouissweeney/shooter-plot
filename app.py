@@ -151,11 +151,6 @@ tunnel = tunnel_model(d)
 # 3D Plot
 # -------------------------
 
-show_points = st.checkbox(
-    "Show Calibration Points",
-    value=True
-)
-
 
 
 fig = go.Figure()
