@@ -146,7 +146,6 @@ d = np.linspace(d_min, d_max, samples)
 
 hood = hood_model(d)
 shooter = shooter_model(d)
-tunnel = tunnel_model(d)
 # -------------------------
 # 3D Plot
 # -------------------------
@@ -157,16 +156,14 @@ fig = go.Figure()
 
 # Main shooter curve
 fig.add_trace(
-    go.Scatter3d(
+        go.Scatter3d(
         x=d,
         y=hood,
         z=shooter,
         mode="lines",
         line=dict(
             width=8,
-            color=tunnel,
-            colorscale="Viridis",
-            colorbar=dict(title="Tunnel RPM")
+            color='royalblue'
         ),
         name="Shooter Curve"
     )
@@ -203,7 +200,6 @@ df = pd.DataFrame({
     "Distance": d,
     "Hood Angle": hood,
     "Shooter RPM": shooter,
-    "Tunnel RPM": tunnel
 })
 
 st.dataframe(df)
