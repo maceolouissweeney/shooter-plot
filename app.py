@@ -121,16 +121,6 @@ def solve_exit_speed(distance_m, angle_deg, target_height_m, launch_height_m, ro
     return np.nanmin(exit_candidates, axis=0)
 
 
-def rpm_to_exit_speed(rpm, wheel_diameter_in, speed_ratio):
-    wheel_circumference_m = np.pi * wheel_diameter_in * IN_TO_M
-    return rpm * wheel_circumference_m / 60.0 * speed_ratio
-
-
-def exit_speed_to_rpm(speed_mps, wheel_diameter_in, speed_ratio):
-    wheel_circumference_m = np.pi * wheel_diameter_in * IN_TO_M
-    return speed_mps * 60.0 / (wheel_circumference_m * speed_ratio)
-
-
 def add_surface(fig, x, y, z, name, color_scale, opacity):
     fig.add_trace(
         go.Surface(
@@ -324,7 +314,7 @@ with tab_theory:
             step=0.1
         )
 
-    c4, c5, c6 = st.columns(3)
+    c4, c5 = st.columns(2)
     with c4:
         robot_velocity_mps = st.slider(
             "Robot velocity along shot (m/s)",
@@ -341,24 +331,6 @@ with tab_theory:
             40.0,
             20.0,
             0.5
-        )
-    with c6:
-        show_rpm_overlay = st.checkbox("Overlay measured RPM as exit speed", value=False)
-        wheel_diameter_in = st.number_input(
-            "Wheel diameter (in)",
-            min_value=1.0,
-            max_value=12.0,
-            value=4.0,
-            step=0.25,
-            disabled=not show_rpm_overlay
-        )
-        wheel_to_ball_ratio = st.number_input(
-            "Wheel-to-ball speed ratio",
-            min_value=0.1,
-            max_value=2.0,
-            value=1.0,
-            step=0.05,
-            disabled=not show_rpm_overlay
         )
 
     theory_d_min, theory_d_max = sorted([theory_d_min, theory_d_max])
@@ -404,27 +376,6 @@ with tab_theory:
     add_surface(fig, distance_grid, angle_grid, upper_display, "Upper limit", "Greens", 0.78)
     add_surface(fig, distance_grid, angle_grid, lower_display, "Lower limit", "Reds", 0.78)
 
-    if show_rpm_overlay:
-        fit_type_overlay = "Spline"
-        measured_speed = rpm_to_exit_speed(
-            shooter_rpm_pts,
-            wheel_diameter_in,
-            wheel_to_ball_ratio
-        )
-        overlay_model = fit_curve(distance_pts, measured_speed, fit_type_overlay)
-        hood_model_overlay = fit_curve(distance_pts, hood_angle_pts, fit_type_overlay)
-        overlay_distances = np.linspace(distance_pts.min(), distance_pts.max(), 200)
-        fig.add_trace(
-            go.Scatter3d(
-                x=overlay_distances,
-                y=hood_model_overlay(overlay_distances),
-                z=overlay_model(overlay_distances),
-                mode="lines",
-                line=dict(width=7, color="royalblue"),
-                name="Measured curve estimate"
-            )
-        )
-
     fig.update_layout(
         scene=dict(
             xaxis_title="Distance to goal plane (m)",
@@ -453,22 +404,11 @@ with tab_theory:
     m3.metric("Highest displayed exit speed", "n/a" if np.isnan(max_speed) else f"{max_speed:.2f} m/s")
     m4.metric("Vertical scoring window", f"{target_lower_m:.2f} m to {target_upper_m:.2f} m")
 
-    rpm_df = pd.DataFrame({
+    scoring_df = pd.DataFrame({
         "Distance (m)": distance_grid[scoring_mask],
         "Hood Angle (deg)": angle_grid[scoring_mask],
         "Lower Exit Speed (m/s)": lower_display[scoring_mask],
         "Upper Exit Speed (m/s)": upper_display[scoring_mask],
     })
-    if show_rpm_overlay:
-        rpm_df["Lower RPM Estimate"] = exit_speed_to_rpm(
-            rpm_df["Lower Exit Speed (m/s)"],
-            wheel_diameter_in,
-            wheel_to_ball_ratio
-        )
-        rpm_df["Upper RPM Estimate"] = exit_speed_to_rpm(
-            rpm_df["Upper Exit Speed (m/s)"],
-            wheel_diameter_in,
-            wheel_to_ball_ratio
-        )
 
-    st.dataframe(rpm_df, use_container_width=True)
+    st.dataframe(scoring_df, use_container_width=True)
