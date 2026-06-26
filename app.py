@@ -100,7 +100,7 @@ target_height_in = st.sidebar.number_input(
 launch_height_in = st.sidebar.number_input(
     "Launch Height (in)",
     min_value=0.0,
-    value=9.92,
+    value=50.0,
     step=1.0
 )
 
@@ -108,7 +108,10 @@ angle_min, angle_max = st.sidebar.slider(
     "Hood Angle Range (deg)",
     1.0,
     89.0,
-    (17.5, 55.0),
+    (
+        float(max(1.0, np.floor(hood_angle_pts.min() - 5.0))),
+        float(min(89.0, np.ceil(hood_angle_pts.max() + 10.0)))
+    ),
     step=0.5
 )
 
