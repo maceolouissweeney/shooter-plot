@@ -4,10 +4,13 @@ import streamlit as st
 import plotly.graph_objects as go
 from scipy.interpolate import interp1d
 
-st.set_page_config(layout="wide")
+st.set_page_config(layout="wide", page_title="Shooter Calibration Surface")
+
+IN_TO_M = 0.0254
+G = 9.80665
 
 # -------------------------
-# Raw Tuning data
+# Raw tuning data
 # -------------------------
 
 distance_pts = np.array([
@@ -49,20 +52,8 @@ hood_angle_pts = np.array([
     26.5
 ])
 
-fit_type = st.selectbox(
-    "Regression Type",
-    [
-        "Linear",
-        "Quadratic",
-        "Cubic",
-        "Quartic",
-        "Spline"
-    ],
-    index=4
-)
 
 def fit_curve(x, y, fit_type):
-
     if fit_type == "Spline":
         return interp1d(
             x,
@@ -78,9 +69,7 @@ def fit_curve(x, y, fit_type):
         "Quartic": 4
     }
 
-    degree = degree_map[fit_type]
-
-    coeffs = np.polyfit(x, y, degree)
+    coeffs = np.polyfit(x, y, degree_map[fit_type])
     poly = np.poly1d(coeffs)
 
     return lambda xx: poly(xx)
@@ -99,117 +88,387 @@ def compute_fit_metrics(x, y, model):
         "num_points": len(y)
     }
 
-shooter_model = fit_curve(
-    distance_pts,
-    shooter_rpm_pts,
-    fit_type
-)
 
-hood_model = fit_curve(
-    distance_pts,
-    hood_angle_pts,
-    fit_type
-)
+def solve_exit_speed(distance_m, angle_deg, target_height_m, launch_height_m, robot_velocity_mps):
+    """Return ball exit speed relative to the robot for a target height."""
+    theta = np.deg2rad(angle_deg)
+    cos_theta = np.cos(theta)
+    tan_theta = np.tan(theta)
+    dy = target_height_m - launch_height_m
 
-d_min = st.slider(
-    "Minimum Distance (m)",
-    float(distance_pts.min()),
-    float(distance_pts.max()),
-    float(distance_pts.min())
-)
+    a = distance_m * tan_theta - dy
+    b = -robot_velocity_mps * distance_m * tan_theta
+    c = -0.5 * G * distance_m ** 2
+    discriminant = b ** 2 - 4.0 * a * c
 
-d_max = st.slider(
-    "Maximum Distance (m)",
-    float(distance_pts.min()),
-    float(distance_pts.max()),
-    float(distance_pts.max())
-)
+    with np.errstate(invalid="ignore", divide="ignore"):
+        sqrt_disc = np.sqrt(discriminant)
+        q1 = (-b + sqrt_disc) / (2.0 * a)
+        q2 = (-b - sqrt_disc) / (2.0 * a)
 
-samples = st.slider(
-    "Samples",
-    50,
-    1000,
-    300
-)
+    q_candidates = np.stack([q1, q2])
+    exit_candidates = (q_candidates - robot_velocity_mps) / cos_theta
+    exit_candidates = np.where(
+        (discriminant >= 0.0)
+        & (np.abs(a) > 1e-9)
+        & (np.abs(cos_theta) > 1e-9)
+        & (q_candidates > 0.0)
+        & (exit_candidates > 0.0),
+        exit_candidates,
+        np.nan
+    )
 
-# -------------------------
-# Generate curve
-# -------------------------
-
-d = np.linspace(d_min, d_max, samples)
-
-hood = hood_model(d)
-shooter = shooter_model(d)
-# -------------------------
-# 3D Plot
-# -------------------------
+    return np.nanmin(exit_candidates, axis=0)
 
 
+def rpm_to_exit_speed(rpm, wheel_diameter_in, speed_ratio):
+    wheel_circumference_m = np.pi * wheel_diameter_in * IN_TO_M
+    return rpm * wheel_circumference_m / 60.0 * speed_ratio
 
-fig = go.Figure()
 
-# Main shooter curve
-fig.add_trace(
+def exit_speed_to_rpm(speed_mps, wheel_diameter_in, speed_ratio):
+    wheel_circumference_m = np.pi * wheel_diameter_in * IN_TO_M
+    return speed_mps * 60.0 / (wheel_circumference_m * speed_ratio)
+
+
+def add_surface(fig, x, y, z, name, color_scale, opacity):
+    fig.add_trace(
+        go.Surface(
+            x=x,
+            y=y,
+            z=z,
+            name=name,
+            colorscale=color_scale,
+            showscale=False,
+            opacity=opacity,
+            hovertemplate=(
+                "Distance: %{x:.2f} m<br>"
+                "Hood angle: %{y:.1f} deg<br>"
+                "Exit speed: %{z:.2f} m/s"
+                "<extra>" + name + "</extra>"
+            )
+        )
+    )
+
+
+st.title("FRC Shooter Calibration")
+
+tab_calibration, tab_theory = st.tabs([
+    "Calibration fit",
+    "Theoretical scoring surface"
+])
+
+with tab_calibration:
+    fit_type = st.selectbox(
+        "Regression Type",
+        [
+            "Linear",
+            "Quadratic",
+            "Cubic",
+            "Quartic",
+            "Spline"
+        ],
+        index=4
+    )
+
+    shooter_model = fit_curve(
+        distance_pts,
+        shooter_rpm_pts,
+        fit_type
+    )
+
+    hood_model = fit_curve(
+        distance_pts,
+        hood_angle_pts,
+        fit_type
+    )
+
+    d_min = st.slider(
+        "Minimum Distance (m)",
+        float(distance_pts.min()),
+        float(distance_pts.max()),
+        float(distance_pts.min())
+    )
+
+    d_max = st.slider(
+        "Maximum Distance (m)",
+        float(distance_pts.min()),
+        float(distance_pts.max()),
+        float(distance_pts.max())
+    )
+
+    samples = st.slider(
+        "Samples",
+        50,
+        1000,
+        300
+    )
+
+    d = np.linspace(d_min, d_max, samples)
+    hood = hood_model(d)
+    shooter = shooter_model(d)
+
+    fig = go.Figure()
+
+    fig.add_trace(
         go.Scatter3d(
-        x=d,
-        y=hood,
-        z=shooter,
-        mode="lines",
-        line=dict(
-            width=8,
-            color='royalblue'
+            x=d,
+            y=hood,
+            z=shooter,
+            mode="lines",
+            line=dict(
+                width=8,
+                color="royalblue"
+            ),
+            name="Shooter Curve"
+        )
+    )
+
+    fig.add_trace(
+        go.Scatter3d(
+            x=distance_pts,
+            y=hood_angle_pts,
+            z=shooter_rpm_pts,
+            mode="markers",
+            marker=dict(size=5),
+            name="Measured Points"
+        )
+    )
+
+    fig.update_layout(
+        scene=dict(
+            xaxis_title="Distance (m)",
+            yaxis_title="Hood Angle (deg)",
+            zaxis_title="Shooter RPM"
         ),
-        name="Shooter Curve"
+        height=800
     )
-)
 
-# Raw calibration points
-fig.add_trace(
-    go.Scatter3d(
-        x=distance_pts,
-        y=hood_angle_pts,
-        z=shooter_rpm_pts,
-        mode="markers",
-        marker=dict(size=5),
-        name="Measured Points"
+    st.plotly_chart(fig, use_container_width=True)
+
+    shooter_metrics = compute_fit_metrics(distance_pts, shooter_rpm_pts, shooter_model)
+    hood_metrics = compute_fit_metrics(distance_pts, hood_angle_pts, hood_model)
+
+    col1, col2 = st.columns(2)
+    with col1:
+        st.metric("Shooter fit R²", f"{shooter_metrics['r2']:.4f}")
+        st.metric("Shooter RMSE", f"{shooter_metrics['rmse']:.2f}")
+    with col2:
+        st.metric("Hood fit R²", f"{hood_metrics['r2']:.4f}")
+        st.metric("Hood RMSE", f"{hood_metrics['rmse']:.2f}")
+
+    df = pd.DataFrame({
+        "Distance": d,
+        "Hood Angle": hood,
+        "Shooter RPM": shooter,
+    })
+
+    st.dataframe(df)
+
+with tab_theory:
+    st.subheader("Projectile scoring envelope")
+
+    c1, c2, c3 = st.columns(3)
+    with c1:
+        theory_d_min = st.number_input(
+            "Minimum distance (m)",
+            min_value=0.1,
+            max_value=20.0,
+            value=float(distance_pts.min()),
+            step=0.1
+        )
+        theory_d_max = st.number_input(
+            "Maximum distance (m)",
+            min_value=0.1,
+            max_value=20.0,
+            value=float(distance_pts.max()),
+            step=0.1
+        )
+        distance_samples = st.slider("Distance samples", 20, 300, 120)
+    with c2:
+        angle_min = st.number_input(
+            "Minimum hood angle (deg)",
+            min_value=1.0,
+            max_value=89.0,
+            value=10.0,
+            step=1.0
+        )
+        angle_max = st.number_input(
+            "Maximum hood angle (deg)",
+            min_value=1.0,
+            max_value=89.0,
+            value=65.0,
+            step=1.0
+        )
+        angle_samples = st.slider("Angle samples", 20, 300, 140)
+    with c3:
+        launch_height_in = st.number_input(
+            "Launch height (in)",
+            min_value=0.0,
+            max_value=120.0,
+            value=28.0,
+            step=1.0
+        )
+        goal_center_height_in = st.number_input(
+            "Goal center height (in)",
+            min_value=0.0,
+            max_value=180.0,
+            value=72.0,
+            step=1.0
+        )
+        opening_height_in = st.number_input(
+            "Opening height (in)",
+            min_value=1.0,
+            max_value=120.0,
+            value=41.7,
+            step=0.1
+        )
+
+    c4, c5, c6 = st.columns(3)
+    with c4:
+        robot_velocity_mps = st.slider(
+            "Robot velocity along shot (m/s)",
+            -5.0,
+            5.0,
+            0.0,
+            0.1,
+            help="Positive means driving toward the goal; negative means driving away."
+        )
+    with c5:
+        max_exit_speed = st.slider(
+            "Max displayed exit speed (m/s)",
+            1.0,
+            40.0,
+            20.0,
+            0.5
+        )
+    with c6:
+        show_rpm_overlay = st.checkbox("Overlay measured RPM as exit speed", value=False)
+        wheel_diameter_in = st.number_input(
+            "Wheel diameter (in)",
+            min_value=1.0,
+            max_value=12.0,
+            value=4.0,
+            step=0.25,
+            disabled=not show_rpm_overlay
+        )
+        wheel_to_ball_ratio = st.number_input(
+            "Wheel-to-ball speed ratio",
+            min_value=0.1,
+            max_value=2.0,
+            value=1.0,
+            step=0.05,
+            disabled=not show_rpm_overlay
+        )
+
+    theory_d_min, theory_d_max = sorted([theory_d_min, theory_d_max])
+    angle_min, angle_max = sorted([angle_min, angle_max])
+
+    goal_center_m = goal_center_height_in * IN_TO_M
+    half_opening_m = opening_height_in * IN_TO_M / 2.0
+    target_lower_m = goal_center_m - half_opening_m
+    target_upper_m = goal_center_m + half_opening_m
+    launch_height_m = launch_height_in * IN_TO_M
+
+    distances = np.linspace(theory_d_min, theory_d_max, distance_samples)
+    angles = np.linspace(angle_min, angle_max, angle_samples)
+    distance_grid, angle_grid = np.meshgrid(distances, angles)
+
+    lower_speed = solve_exit_speed(
+        distance_grid,
+        angle_grid,
+        target_lower_m,
+        launch_height_m,
+        robot_velocity_mps
     )
-)
+    upper_speed = solve_exit_speed(
+        distance_grid,
+        angle_grid,
+        target_upper_m,
+        launch_height_m,
+        robot_velocity_mps
+    )
 
-fig.update_layout(
-    scene=dict(
-        xaxis_title="Distance (m)",
-        yaxis_title="Hood Angle (deg)",
-        zaxis_title="Shooter RPM"
-    ),
-    height=800
-)
+    speed_floor = np.minimum(lower_speed, upper_speed)
+    speed_ceiling = np.maximum(lower_speed, upper_speed)
+    scoring_mask = (
+        np.isfinite(speed_floor)
+        & np.isfinite(speed_ceiling)
+        & (speed_floor <= max_exit_speed)
+    )
 
-st.plotly_chart(fig, use_container_width=True)
+    lower_display = np.where(scoring_mask, speed_floor, np.nan)
+    upper_display = np.where(scoring_mask, np.minimum(speed_ceiling, max_exit_speed), np.nan)
 
-# -------------------------
-# Fit quality metrics
-# -------------------------
+    fig = go.Figure()
+    add_surface(fig, distance_grid, angle_grid, upper_display, "Upper limit", "Greens", 0.78)
+    add_surface(fig, distance_grid, angle_grid, lower_display, "Lower limit", "Reds", 0.78)
 
-shooter_metrics = compute_fit_metrics(distance_pts, shooter_rpm_pts, shooter_model)
-hood_metrics = compute_fit_metrics(distance_pts, hood_angle_pts, hood_model)
+    if show_rpm_overlay:
+        fit_type_overlay = "Spline"
+        measured_speed = rpm_to_exit_speed(
+            shooter_rpm_pts,
+            wheel_diameter_in,
+            wheel_to_ball_ratio
+        )
+        overlay_model = fit_curve(distance_pts, measured_speed, fit_type_overlay)
+        hood_model_overlay = fit_curve(distance_pts, hood_angle_pts, fit_type_overlay)
+        overlay_distances = np.linspace(distance_pts.min(), distance_pts.max(), 200)
+        fig.add_trace(
+            go.Scatter3d(
+                x=overlay_distances,
+                y=hood_model_overlay(overlay_distances),
+                z=overlay_model(overlay_distances),
+                mode="lines",
+                line=dict(width=7, color="royalblue"),
+                name="Measured curve estimate"
+            )
+        )
 
-col1, col2 = st.columns(2)
-with col1:
-    st.metric("Shooter fit R²", f"{shooter_metrics['r2']:.4f}")
-    st.metric("Shooter RMSE", f"{shooter_metrics['rmse']:.2f}")
-with col2:
-    st.metric("Hood fit R²", f"{hood_metrics['r2']:.4f}")
-    st.metric("Hood RMSE", f"{hood_metrics['rmse']:.2f}")
+    fig.update_layout(
+        scene=dict(
+            xaxis_title="Distance to goal plane (m)",
+            yaxis_title="Launch / hood angle (deg)",
+            zaxis_title="Exit velocity (m/s)",
+            zaxis=dict(range=[0, max_exit_speed])
+        ),
+        height=820,
+        legend=dict(
+            x=0.02,
+            y=0.98
+        ),
+        margin=dict(l=0, r=0, t=40, b=0)
+    )
 
-# -------------------------
-# Data Table
-# -------------------------
+    st.plotly_chart(fig, use_container_width=True)
 
-df = pd.DataFrame({
-    "Distance": d,
-    "Hood Angle": hood,
-    "Shooter RPM": shooter,
-})
+    valid_cells = int(np.count_nonzero(scoring_mask))
+    total_cells = int(scoring_mask.size)
+    min_speed = np.nanmin(lower_display) if valid_cells else np.nan
+    max_speed = np.nanmax(upper_display) if valid_cells else np.nan
 
-st.dataframe(df)
+    m1, m2, m3, m4 = st.columns(4)
+    m1.metric("Valid angle-distance cells", f"{valid_cells:,} / {total_cells:,}")
+    m2.metric("Lowest exit speed", "n/a" if np.isnan(min_speed) else f"{min_speed:.2f} m/s")
+    m3.metric("Highest displayed exit speed", "n/a" if np.isnan(max_speed) else f"{max_speed:.2f} m/s")
+    m4.metric("Vertical scoring window", f"{target_lower_m:.2f} m to {target_upper_m:.2f} m")
 
+    rpm_df = pd.DataFrame({
+        "Distance (m)": distance_grid[scoring_mask],
+        "Hood Angle (deg)": angle_grid[scoring_mask],
+        "Lower Exit Speed (m/s)": lower_display[scoring_mask],
+        "Upper Exit Speed (m/s)": upper_display[scoring_mask],
+    })
+    if show_rpm_overlay:
+        rpm_df["Lower RPM Estimate"] = exit_speed_to_rpm(
+            rpm_df["Lower Exit Speed (m/s)"],
+            wheel_diameter_in,
+            wheel_to_ball_ratio
+        )
+        rpm_df["Upper RPM Estimate"] = exit_speed_to_rpm(
+            rpm_df["Upper Exit Speed (m/s)"],
+            wheel_diameter_in,
+            wheel_to_ball_ratio
+        )
+
+    st.dataframe(rpm_df, use_container_width=True)
