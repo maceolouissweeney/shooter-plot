@@ -121,6 +121,14 @@ def solve_exit_speed(distance_m, angle_deg, target_height_m, launch_height_m, ro
     return np.nanmin(exit_candidates, axis=0)
 
 
+def hex_vertical_span_from_width(width_in, width_definition):
+    if width_definition == "Point-to-point width":
+        return width_in * np.sqrt(3.0) / 2.0
+    if width_definition == "Flat-to-flat width":
+        return width_in * 2.0 / np.sqrt(3.0)
+    return width_in
+
+
 def add_surface(fig, x, y, z, name, color_scale, opacity):
     fig.add_trace(
         go.Surface(
@@ -300,18 +308,34 @@ with tab_theory:
             step=1.0
         )
         goal_center_height_in = st.number_input(
-            "Goal center height (in)",
+            "Goal height reference (in)",
             min_value=0.0,
             max_value=180.0,
             value=72.0,
             step=1.0
         )
-        opening_height_in = st.number_input(
-            "Opening height (in)",
+        goal_height_reference = st.selectbox(
+            "Height reference type",
+            [
+                "Center",
+                "Bottom",
+                "Top"
+            ]
+        )
+        hex_width_in = st.number_input(
+            "Hex width (in)",
             min_value=1.0,
             max_value=120.0,
             value=41.7,
             step=0.1
+        )
+        hex_width_definition = st.selectbox(
+            "Hex width type",
+            [
+                "Point-to-point width",
+                "Flat-to-flat width",
+                "Use width as vertical span"
+            ]
         )
 
     c4, c5 = st.columns(2)
@@ -336,10 +360,19 @@ with tab_theory:
     theory_d_min, theory_d_max = sorted([theory_d_min, theory_d_max])
     angle_min, angle_max = sorted([angle_min, angle_max])
 
-    goal_center_m = goal_center_height_in * IN_TO_M
-    half_opening_m = opening_height_in * IN_TO_M / 2.0
-    target_lower_m = goal_center_m - half_opening_m
-    target_upper_m = goal_center_m + half_opening_m
+    hex_vertical_span_in = hex_vertical_span_from_width(hex_width_in, hex_width_definition)
+    if goal_height_reference == "Bottom":
+        target_lower_in = goal_center_height_in
+        target_upper_in = goal_center_height_in + hex_vertical_span_in
+    elif goal_height_reference == "Top":
+        target_lower_in = goal_center_height_in - hex_vertical_span_in
+        target_upper_in = goal_center_height_in
+    else:
+        target_lower_in = goal_center_height_in - hex_vertical_span_in / 2.0
+        target_upper_in = goal_center_height_in + hex_vertical_span_in / 2.0
+
+    target_lower_m = target_lower_in * IN_TO_M
+    target_upper_m = target_upper_in * IN_TO_M
     launch_height_m = launch_height_in * IN_TO_M
 
     distances = np.linspace(theory_d_min, theory_d_max, distance_samples)
@@ -373,8 +406,8 @@ with tab_theory:
     upper_display = np.where(scoring_mask, np.minimum(speed_ceiling, max_exit_speed), np.nan)
 
     fig = go.Figure()
-    add_surface(fig, distance_grid, angle_grid, upper_display, "Upper limit", "Greens", 0.78)
-    add_surface(fig, distance_grid, angle_grid, lower_display, "Lower limit", "Reds", 0.78)
+    add_surface(fig, distance_grid, angle_grid, upper_display, "Max scoring exit velocity", "Greens", 0.78)
+    add_surface(fig, distance_grid, angle_grid, lower_display, "Min scoring exit velocity", "Reds", 0.78)
 
     fig.update_layout(
         scene=dict(
@@ -402,7 +435,7 @@ with tab_theory:
     m1.metric("Valid angle-distance cells", f"{valid_cells:,} / {total_cells:,}")
     m2.metric("Lowest exit speed", "n/a" if np.isnan(min_speed) else f"{min_speed:.2f} m/s")
     m3.metric("Highest displayed exit speed", "n/a" if np.isnan(max_speed) else f"{max_speed:.2f} m/s")
-    m4.metric("Vertical scoring window", f"{target_lower_m:.2f} m to {target_upper_m:.2f} m")
+    m4.metric("Vertical scoring window", f"{target_lower_in:.1f} in to {target_upper_in:.1f} in")
 
     scoring_df = pd.DataFrame({
         "Distance (m)": distance_grid[scoring_mask],
