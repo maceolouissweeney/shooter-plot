@@ -49,6 +49,8 @@ hood_angle_pts = np.array([
     26.5
 ])
 
+target_height_m = 1.8288  # 72 inches above ground, FRC fuel target opening height in meters
+
 fit_type = st.selectbox(
     "Regression Type",
     [
@@ -98,6 +100,21 @@ def compute_fit_metrics(x, y, model):
         "rmse": rmse,
         "num_points": len(y)
     }
+
+
+def compute_required_velocity(distance, angle_deg, y0, y_target, g=9.81):
+    theta = np.deg2rad(angle_deg)
+    dx = distance
+    dy = y_target - y0
+    cos_theta = np.cos(theta)
+    sin_theta = np.sin(theta)
+    denom = dx * np.tan(theta) - dy
+    if denom <= 0 or cos_theta == 0:
+        return np.nan
+    v2 = g * dx ** 2 / (2 * cos_theta ** 2 * denom)
+    if v2 <= 0:
+        return np.nan
+    return np.sqrt(v2)
 
 shooter_model = fit_curve(
     distance_pts,
@@ -200,6 +217,93 @@ with col1:
 with col2:
     st.metric("Hood fit R²", f"{hood_metrics['r2']:.4f}")
     st.metric("Hood RMSE", f"{hood_metrics['rmse']:.2f}")
+
+# -------------------------
+# Ballistic trajectory surface
+# -------------------------
+
+st.markdown("### Ballistic solution surface")
+
+y0 = st.slider(
+    "Shooter launch height (m)",
+    0.5,
+    1.5,
+    1.0,
+    step=0.05
+)
+
+target_height = st.number_input(
+    "Target height (m)",
+    value=target_height_m,
+    step=0.01,
+    format="%.4f"
+)
+
+angle_min = st.slider(
+    "Minimum launch angle (deg)",
+    10,
+    60,
+    20
+)
+
+angle_max = st.slider(
+    "Maximum launch angle (deg)",
+    40,
+    80,
+    60
+)
+
+angle_samples = st.slider(
+    "Angle samples",
+    10,
+    80,
+    40
+)
+
+distance_samples = st.slider(
+    "Trajectory distance samples",
+    10,
+    80,
+    40
+)
+
+surface_angles = np.linspace(angle_min, angle_max, angle_samples)
+surface_distances = np.linspace(d_min, d_max, distance_samples)
+
+velocities = np.full((len(surface_angles), len(surface_distances)), np.nan)
+for i, angle in enumerate(surface_angles):
+    for j, distance in enumerate(surface_distances):
+        velocities[i, j] = compute_required_velocity(distance, angle, y0, target_height)
+
+valid_count = np.count_nonzero(~np.isnan(velocities))
+
+st.write(
+    f"Valid ballistic solutions in surface: {valid_count} / {velocities.size}"
+)
+
+fig_ballistic = go.Figure(
+    data=[
+        go.Surface(
+            x=surface_distances,
+            y=surface_angles,
+            z=velocities,
+            colorscale="Viridis",
+            colorbar=dict(title="Exit velocity (m/s)"),
+            showscale=True
+        )
+    ]
+)
+
+fig_ballistic.update_layout(
+    scene=dict(
+        xaxis_title="Distance (m)",
+        yaxis_title="Launch angle (deg)",
+        zaxis_title="Required exit velocity (m/s)"
+    ),
+    height=700
+)
+
+st.plotly_chart(fig_ballistic, use_container_width=True)
 
 # -------------------------
 # Data Table
